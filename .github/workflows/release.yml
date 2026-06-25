@@ -1,0 +1,48 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+      - '*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build and Release Executable
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install customtkinter pyinstaller pillow
+
+      - name: Inject Version Tag
+        shell: pwsh
+        run: |
+          $TAG = $env:GITHUB_REF_NAME
+          (Get-Content ngrok_launcher.py) -replace 'LAUNCHER_VERSION = "dev"', "LAUNCHER_VERSION = `"$TAG`"" | Set-Content ngrok_launcher.py
+
+      - name: Build Executable
+        shell: pwsh
+        run: |
+          $CUSTOMTKINTER_DIR = python -c "import os, customtkinter; print(os.path.dirname(customtkinter.__file__))"
+          pyinstaller --noconsole --onefile --clean --icon="launcher_icon.ico" --add-data "launcher_icon.ico;." --add-data "${CUSTOMTKINTER_DIR};customtkinter" ngrok_launcher.py
+
+      - name: Create Release and Upload Asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/ngrok_launcher.exe
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

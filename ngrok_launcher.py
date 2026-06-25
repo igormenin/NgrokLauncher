@@ -14,6 +14,8 @@ import customtkinter as ctk
 CONFIG_FILE = "config.json"
 DEFAULT_DOMAIN = "powerful-expert-macaw.ngrok-free.app"
 DEFAULT_PORTS = [80, 8082, 443]
+LAUNCHER_VERSION = "dev"
+GITHUB_REPO = "igormenin/NgrokLauncher"
 
 def resource_path(relative_path):
     """Retorna o caminho absoluto do recurso, seja rodando em script ou empacotado."""
@@ -358,7 +360,7 @@ class NgrokLauncherApp(ctk.CTk):
         self.tunnels_api_url = "http://127.0.0.1:4040/api/tunnels"
         self.check_api_url_attempts = 0
         
-        self.title("NGROK Launcher")
+        self.title(f"NGROK Launcher ({LAUNCHER_VERSION})")
         self.geometry("1000x600")
         self.resizable(False, False)
         
@@ -377,8 +379,9 @@ class NgrokLauncherApp(ctk.CTk):
         # Protocolo para fechar a aplicação de forma limpa
         self.protocol("WM_DELETE_WINDOW", self.on_closing)
         
-        # Agenda verificação do executável ngrok.exe
+        # Agenda verificação do executável ngrok.exe e atualizações do launcher
         self.after(100, self.check_ngrok_executable)
+        self.after(1500, lambda: self.check_for_launcher_updates(manual=False))
         
     def setup_ui(self):
         # 1. Header Frame
@@ -1046,6 +1049,101 @@ class NgrokLauncherApp(ctk.CTk):
                             show_custom_messagebox(self, "Erro", f"Falha ao registrar token:\n{res.stderr.strip()}", icon="error")
                     except Exception as e:
                         show_custom_messagebox(self, "Erro", f"Falha ao executar o registro: {e}", icon="error")
+
+    def check_for_launcher_updates(self, manual=False):
+        """Verifica se há atualizações do launcher no GitHub."""
+        def run_check():
+            try:
+                url = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
+                req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+                with urllib.request.urlopen(req, timeout=5) as response:
+                    data = json.loads(response.read().decode('utf-8'))
+                    latest_tag = data.get("tag_name", "").strip()
+                    # Remove 'v' do início se existir
+                    clean_latest = latest_tag.lstrip('v')
+                    clean_current = LAUNCHER_VERSION.lstrip('v')
+                    
+                    if clean_latest != clean_current and clean_current != "dev":
+                        # Encontra o asset do executável
+                        assets = data.get("assets", [])
+                        download_url = None
+                        for asset in assets:
+                            if asset.get("name") == "ngrok_launcher.exe":
+                                download_url = asset.get("browser_download_url")
+                                break
+                                
+                        if download_url:
+                            self.after(0, lambda: self.prompt_launcher_update(latest_tag, download_url))
+                            return
+                            
+                if manual:
+                    self.after(0, lambda: show_custom_messagebox(self, "Atualização", "Você já está usando a versão mais recente do launcher!", icon="info"))
+            except Exception as e:
+                if manual:
+                    self.after(0, lambda: show_custom_messagebox(self, "Erro", f"Erro ao verificar atualizações: {e}", icon="error"))
+                    
+        threading.Thread(target=run_check, daemon=True).start()
+
+    def prompt_launcher_update(self, latest_version, download_url):
+        """Pergunta ao usuário se deseja atualizar o launcher."""
+        if show_custom_messagebox(
+            self,
+            "Atualização do Launcher",
+            f"Uma nova versão do launcher está disponível ({latest_version}).\n\nDeseja baixar e aplicar a atualização agora?",
+            icon="question",
+            option_type="yesno"
+        ):
+            self.apply_launcher_update(download_url)
+
+    def apply_launcher_update(self, download_url):
+        """Faz o download da nova versão e cria o script de auto-atualização."""
+        self.clear_console()
+        self.append_log("[Update] Iniciando atualização automática do launcher...\n")
+        self.start_btn.configure(state="disabled", text="ATUALIZANDO LAUNCHER...")
+        
+        def run_update():
+            try:
+                is_frozen = getattr(sys, 'frozen', False)
+                if not is_frozen:
+                    self.after(0, self.append_log, "[Update] Executando em modo script. Atualização automática disponível apenas para a versão empacotada (.exe).\n")
+                    self.after(0, lambda: show_custom_messagebox(self, "Atualização", "Você está rodando o launcher a partir do script Python. Baixe a nova versão .exe diretamente do GitHub.", icon="info"))
+                    return
+
+                # 1. Download do novo executável
+                self.after(0, self.append_log, "[Update] Baixando a nova versão do launcher...\n")
+                req = urllib.request.Request(download_url, headers={'User-Agent': 'Mozilla/5.0'})
+                with urllib.request.urlopen(req, timeout=60) as response:
+                    new_exe_data = response.read()
+                    
+                # Grava o novo executável temporário
+                new_exe_name = "ngrok_launcher.exe.new"
+                with open(new_exe_name, "wb") as f:
+                    f.write(new_exe_data)
+                    
+                self.after(0, self.append_log, "[Update] Download concluído! Iniciando processo de substituição...\n")
+                
+                # 2. Criar script de atualização temporário (batch)
+                bat_content = """@echo off
+taskkill /F /IM ngrok_launcher.exe >nul 2>&1
+timeout /t 2 /nobreak >nul
+del /f /q "ngrok_launcher.exe"
+rename "ngrok_launcher.exe.new" "ngrok_launcher.exe"
+start "" "ngrok_launcher.exe"
+del "%~f0"
+"""
+                with open("update_temp.bat", "w", encoding="ansi") as f:
+                    f.write(bat_content)
+                    
+                # 3. Executar o batch e fechar a aplicação atual
+                subprocess.Popen(["update_temp.bat"], creationflags=subprocess.CREATE_NO_WINDOW)
+                self.after(0, self.on_closing)
+                
+            except Exception as e:
+                self.after(0, self.append_log, f"[Erro] Falha ao atualizar o launcher: {e}\n")
+                self.after(0, lambda: show_custom_messagebox(self, "Erro", f"Falha na atualização: {e}", icon="error"))
+                self.after(0, self.reset_start_button)
+                
+        threading.Thread(target=run_update, daemon=True).start()
 
     def on_closing(self):
         """Encerra com segurança o processo do NGROK antes de fechar a janela."""
