@@ -8,7 +8,7 @@ dist/
 *.spec
 
 # Binaries & Configs
-ngrok.exe
+*.exe
 _ngrok.exe
 .ngrok.exe.old
 config.json
