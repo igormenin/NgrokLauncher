@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.pyc
+
+# PyInstaller
+build/
+dist/
+*.spec
+
+# Binaries & Configs
+ngrok.exe
+_ngrok.exe
+.ngrok.exe.old
+config.json
+ngrok_launcher.py.bak
