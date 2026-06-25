@@ -40,9 +40,14 @@ jobs:
           $CUSTOMTKINTER_DIR = python -c "import os, customtkinter; print(os.path.dirname(customtkinter.__file__))"
           pyinstaller --noconsole --onefile --clean --icon="launcher_icon.ico" --add-data "launcher_icon.ico;." --add-data "${CUSTOMTKINTER_DIR};customtkinter" ngrok_launcher.py
 
+      - name: Create ZIP Archive
+        shell: pwsh
+        run: |
+          Compress-Archive -Path dist/ngrok_launcher.exe -DestinationPath dist/ngrok_launcher.zip
+
       - name: Create Release and Upload Asset
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/ngrok_launcher.exe
+          files: dist/ngrok_launcher.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

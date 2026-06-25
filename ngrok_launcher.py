@@ -417,6 +417,19 @@ class NgrokLauncherApp(ctk.CTk):
         )
         self.update_btn.pack(side="right", padx=(0, 5))
         
+        if LAUNCHER_VERSION == "dev":
+            self.test_update_btn = ctk.CTkButton(
+                header_frame,
+                text="Testar Update",
+                width=95,
+                height=36,
+                font=('Segoe UI', 11),
+                fg_color="#2c3e50",
+                hover_color="#34495e",
+                command=lambda: self.check_for_launcher_updates(manual=True, force=True)
+            )
+            self.test_update_btn.pack(side="right", padx=(0, 10))
+        
         # 2. Seção de Seleção de Porta
         lbl_select = ctk.CTkLabel(self, text="Selecione a Porta:", font=('Segoe UI', 12, 'bold'))
         lbl_select.pack(anchor="w", padx=25, pady=(10, 5))
@@ -1050,7 +1063,7 @@ class NgrokLauncherApp(ctk.CTk):
                     except Exception as e:
                         show_custom_messagebox(self, "Erro", f"Falha ao executar o registro: {e}", icon="error")
 
-    def check_for_launcher_updates(self, manual=False):
+    def check_for_launcher_updates(self, manual=False, force=False):
         """Verifica se há atualizações do launcher no GitHub."""
         def run_check():
             try:
@@ -1063,14 +1076,19 @@ class NgrokLauncherApp(ctk.CTk):
                     clean_latest = latest_tag.lstrip('v')
                     clean_current = LAUNCHER_VERSION.lstrip('v')
                     
-                    if clean_latest != clean_current and clean_current != "dev":
-                        # Encontra o asset do executável
+                    if (clean_latest != clean_current and clean_current != "dev") or force:
+                        # Encontra o asset do ZIP (ou EXE se não encontrar o ZIP)
                         assets = data.get("assets", [])
                         download_url = None
                         for asset in assets:
-                            if asset.get("name") == "ngrok_launcher.exe":
+                            if asset.get("name") == "ngrok_launcher.zip":
                                 download_url = asset.get("browser_download_url")
                                 break
+                        if not download_url:
+                            for asset in assets:
+                                if asset.get("name") == "ngrok_launcher.exe":
+                                    download_url = asset.get("browser_download_url")
+                                    break
                                 
                         if download_url:
                             self.after(0, lambda: self.prompt_launcher_update(latest_tag, download_url))
@@ -1109,33 +1127,39 @@ class NgrokLauncherApp(ctk.CTk):
                     self.after(0, lambda: show_custom_messagebox(self, "Atualização", "Você está rodando o launcher a partir do script Python. Baixe a nova versão .exe diretamente do GitHub.", icon="info"))
                     return
 
-                # 1. Download do novo executável
-                self.after(0, self.append_log, "[Update] Baixando a nova versão do launcher...\n")
+                exe_path = sys.executable
+                exe_dir = os.path.dirname(exe_path)
+                current_exe_name = os.path.basename(exe_path)
+                zip_path = os.path.join(exe_dir, "last_version.zip")
+                bat_path = os.path.join(exe_dir, "update_temp.bat")
+
+                # 1. Download do ZIP
+                self.after(0, self.append_log, "[Update] Baixando a nova versão em arquivo ZIP...\n")
                 req = urllib.request.Request(download_url, headers={'User-Agent': 'Mozilla/5.0'})
                 with urllib.request.urlopen(req, timeout=60) as response:
-                    new_exe_data = response.read()
+                    new_zip_data = response.read()
                     
-                # Grava o novo executável temporário
-                new_exe_name = "ngrok_launcher.exe.new"
-                with open(new_exe_name, "wb") as f:
-                    f.write(new_exe_data)
+                # Grava o ZIP
+                with open(zip_path, "wb") as f:
+                    f.write(new_zip_data)
                     
                 self.after(0, self.append_log, "[Update] Download concluído! Iniciando processo de substituição...\n")
                 
                 # 2. Criar script de atualização temporário (batch)
-                bat_content = """@echo off
-taskkill /F /IM ngrok_launcher.exe >nul 2>&1
+                bat_content = f"""@echo off
+cd /d "{exe_dir}"
 timeout /t 2 /nobreak >nul
-del /f /q "ngrok_launcher.exe"
-rename "ngrok_launcher.exe.new" "ngrok_launcher.exe"
-start "" "ngrok_launcher.exe"
+taskkill /F /IM "{current_exe_name}" >nul 2>&1
+powershell -Command "Expand-Archive -Path 'last_version.zip' -DestinationPath '.' -Force"
+if exist "last_version.zip" del "last_version.zip"
+powershell -Command "Add-Type -AssemblyName PresentationFramework; [System.Windows.MessageBox]::Show('Atualização concluída com sucesso!' + [char]10 + [char]10 + 'Você já pode iniciar o aplicativo novamente.', 'NGROK Launcher')"
 del "%~f0"
 """
-                with open("update_temp.bat", "w", encoding="ansi") as f:
+                with open(bat_path, "w", encoding="ansi") as f:
                     f.write(bat_content)
                     
                 # 3. Executar o batch e fechar a aplicação atual
-                subprocess.Popen(["update_temp.bat"], creationflags=subprocess.CREATE_NO_WINDOW)
+                subprocess.Popen([bat_path], creationflags=subprocess.CREATE_NO_WINDOW)
                 self.after(0, self.on_closing)
                 
             except Exception as e:
